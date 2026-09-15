@@ -7,8 +7,14 @@ import {
   Search, Plus, Upload, LogOut, Edit2, Trash2, Zap, Space,
   FileSpreadsheet, AlertCircle, CheckCircle2, RefreshCw, X,
   Tag, MessageSquare, Copy, Check, ChevronDown, Filter,
-  Layers, Smartphone, ExternalLink
+  Layers, Smartphone, ExternalLink, AlertTriangle, FolderOpen, FileText
 } from 'lucide-react';
+import {
+  parsePerfectKeyboardFile,
+  PerfectKeyboardParseResult,
+  ValidShortcut,
+  FailedShortcut
+} from '@/lib/perfectKeyboardParser';
 
 const CATEGORIES = [
   'Semua Kategori',
@@ -28,6 +34,156 @@ const FORM_CATEGORIES = [
   'Promo & Bonus',
   'Umum'
 ];
+
+interface WarningRowProps {
+  item: FailedShortcut;
+  idx: number;
+  existingTriggers: string[];
+  copiedExpansionIdx: number | null;
+  onCopyExpansion: (text: string, idx: number) => void;
+  onResolve: (item: FailedShortcut, newTrigger: string) => void;
+}
+
+/**
+ * Komponen baris warning interaktif (Interactive Inline Fixer)
+ * Memungkinkan pengguna langsung menetapkan trigger baru bebas duplikat
+ * dan memindahkan shortcut yang tadinya tidak didukung ke daftar Valid Shortcuts.
+ */
+function WarningRow({
+  item,
+  idx,
+  existingTriggers,
+  copiedExpansionIdx,
+  onCopyExpansion,
+  onResolve
+}: WarningRowProps) {
+  const [customTrigger, setCustomTrigger] = useState(item.suggestedTrigger || '');
+  const [error, setError] = useState('');
+
+  // Sederhanakan format trigger (tambahkan slash jika belum ada & ganti spasi dengan garis bawah)
+  const formatTrigger = (val: string) => {
+    let formatted = val.trim().replace(/\s+/g, '_');
+    if (formatted && !formatted.startsWith('/') && !formatted.startsWith('!')) {
+      formatted = '/' + formatted;
+    }
+    return formatted;
+  };
+
+  const handleChange = (val: string) => {
+    const formatted = formatTrigger(val);
+    setCustomTrigger(formatted);
+
+    if (!formatted) {
+      setError('');
+      return;
+    }
+
+    // Cek duplikat real-time terhadap DB Supabase & Valid Shortcuts
+    if (existingTriggers.includes(formatted.toLowerCase())) {
+      setError('Trigger sudah digunakan!');
+    } else {
+      setError('');
+    }
+  };
+
+  const handleApply = () => {
+    if (!customTrigger || error) return;
+    const formatted = formatTrigger(customTrigger);
+    if (!formatted || existingTriggers.includes(formatted.toLowerCase())) {
+      setError('Trigger sudah digunakan!');
+      return;
+    }
+    onResolve(item, formatted);
+  };
+
+  const expansionText = item.expansion || item.rawExpansion || item.rawMessage || '';
+  const suggestionCandidate = item.suggestedTrigger || `/m_${item.lineNum}`;
+
+  return (
+    <tr className="hover:bg-amber-950/20 transition-colors border-b border-amber-900/20 bg-slate-950/40">
+      <td className="p-2.5 font-mono text-slate-400 align-top text-xs">#{item.lineNum}</td>
+      <td className="p-2.5 align-top">
+        <span className="inline-block px-2 py-1 bg-amber-950 text-amber-400 border border-amber-800/60 rounded font-mono text-xs font-bold">
+          {item.rawTrigger || '[Hotkey PC]'}
+        </span>
+      </td>
+      {/* Kolom Isi Pesan (Expansion) */}
+      <td className="p-2.5 max-w-xs align-top">
+        <div className="relative group bg-slate-900 p-2 rounded text-xs text-slate-300 whitespace-pre-wrap max-h-20 overflow-y-auto border border-slate-800 font-sans shadow-inner">
+          <div className="pr-6 select-text">
+            {expansionText || '(Teks Kosong)'}
+          </div>
+          {expansionText && (
+            <button
+              type="button"
+              onClick={() => onCopyExpansion(expansionText, idx)}
+              className="absolute top-1.5 right-1.5 p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-amber-300 transition-colors border border-slate-700/60"
+              title="Salin isi pesan"
+            >
+              {copiedExpansionIdx === idx ? (
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Copy className="w-3.5 h-3.5" />
+              )}
+            </button>
+          )}
+        </div>
+      </td>
+      {/* Kolom Alasan Tidak Diproses */}
+      <td className="p-2.5 text-xs text-amber-200/90 font-medium leading-relaxed align-top min-w-[170px]">
+        {item.reason}
+      </td>
+      {/* Kolom Saran Tindakan / Interactive Inline Fixer */}
+      <td className="p-2.5 align-top min-w-[240px]">
+        <div className="flex flex-col gap-1.5">
+          {/* Opsi Saran Cepat */}
+          <div className="flex gap-1.5 items-center flex-wrap">
+            <span className="text-[10px] text-slate-400 font-medium">Saran:</span>
+            <button
+              type="button"
+              onClick={() => handleChange(suggestionCandidate)}
+              className="text-[10px] bg-amber-950 hover:bg-amber-900 text-amber-300 px-2 py-0.5 rounded border border-amber-800/60 font-mono font-bold transition-colors"
+              title="Gunakan saran trigger ini"
+            >
+              {suggestionCandidate}
+            </button>
+          </div>
+
+          {/* Kolom Input Trigger Manual + Tombol Terapkan */}
+          <div className="flex gap-1.5 items-center">
+            <input
+              type="text"
+              value={customTrigger}
+              onChange={(e) => handleChange(e.target.value)}
+              placeholder="/trigger_baru"
+              className={`text-xs bg-slate-900 px-2.5 py-1.5 rounded-lg border font-mono w-36 focus:outline-none transition-colors ${
+                error
+                  ? 'border-rose-500 text-rose-300 bg-rose-950/20'
+                  : 'border-slate-700 text-emerald-400 focus:border-indigo-500'
+              }`}
+            />
+            <button
+              type="button"
+              onClick={handleApply}
+              disabled={!customTrigger || !!error}
+              className="px-3 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-lg font-medium transition shadow-sm disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              Simpan ke Valid
+            </button>
+          </div>
+
+          {/* Pesan Error Duplikat */}
+          {error && (
+            <span className="text-[11px] text-rose-400 font-semibold flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 inline-block shrink-0" />
+              {error}
+            </span>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -56,14 +212,83 @@ export default function DashboardPage() {
   const [csvFileName, setCsvFileName] = useState('');
   const [importStatus, setImportStatus] = useState<{ success?: string; error?: string }>({});
 
+  // Modal Import Perfect Keyboard (.4pk, .kps, .txt)
+  const [isPkModalOpen, setIsPkModalOpen] = useState(false);
+  const [pkFileName, setPkFileName] = useState('');
+  const [pkParseResult, setPkParseResult] = useState<PerfectKeyboardParseResult | null>(null);
+  const [pkActiveTab, setPkActiveTab] = useState<'failed' | 'valid'>('failed');
+  const [pkSearchQuery, setPkSearchQuery] = useState('');
+  const [pkCategory, setPkCategory] = useState('Perfect Keyboard');
+  const [pkMode, setPkMode] = useState<'INSTANT' | 'SPACE'>('INSTANT');
+  const [pkStatus, setPkStatus] = useState<{ success?: string; error?: string }>({});
+  const [isPkProcessing, setIsPkProcessing] = useState(false);
+
   // Modal Delete Confirm
   const [deleteTarget, setDeleteTarget] = useState<ShortcutItem | null>(null);
 
   // Copy indicator state
   const [copiedId, setCopiedId] = useState<string | number | null>(null);
+  const [copiedExpansionIdx, setCopiedExpansionIdx] = useState<number | null>(null);
 
   // Notification Toast
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Anti-duplikat lookup: gabungan trigger di Supabase DB + trigger yang sudah ada di Valid Shortcuts
+  const existingTriggers = useMemo(() => {
+    const dbList = shortcuts.map(s => (s.shortcut || s.trigger_code || '').trim().toLowerCase()).filter(Boolean);
+    const validList = (pkParseResult?.validShortcuts || []).map(s => s.trigger.trim().toLowerCase()).filter(Boolean);
+    return Array.from(new Set([...dbList, ...validList]));
+  }, [shortcuts, pkParseResult?.validShortcuts]);
+
+  // Filter pencarian real-time untuk daftar tidak didukung (failedShortcuts)
+  const filteredFailedList = useMemo(() => {
+    if (!pkParseResult?.failedShortcuts) return [];
+    const q = pkSearchQuery.trim().toLowerCase();
+    if (!q) return pkParseResult.failedShortcuts;
+    return pkParseResult.failedShortcuts.filter(item => {
+      const triggerMatch = (item.rawTrigger || '').toLowerCase().includes(q);
+      const textMatch = (item.expansion || item.rawExpansion || item.rawMessage || '').toLowerCase().includes(q);
+      const reasonMatch = (item.reason || '').toLowerCase().includes(q);
+      return triggerMatch || textMatch || reasonMatch;
+    });
+  }, [pkParseResult?.failedShortcuts, pkSearchQuery]);
+
+  // Filter pencarian real-time untuk daftar shortcut siap diimpor (validShortcuts)
+  const filteredValidList = useMemo(() => {
+    if (!pkParseResult?.validShortcuts) return [];
+    const q = pkSearchQuery.trim().toLowerCase();
+    if (!q) return pkParseResult.validShortcuts;
+    return pkParseResult.validShortcuts.filter(item => {
+      const triggerMatch = (item.trigger || '').toLowerCase().includes(q);
+      const textMatch = (item.expansion || '').toLowerCase().includes(q);
+      return triggerMatch || textMatch;
+    });
+  }, [pkParseResult?.validShortcuts, pkSearchQuery]);
+
+  // Resolusi inline failed shortcut -> pindahkan ke daftar valid
+  const handleResolveFailedShortcut = (item: FailedShortcut, newTrigger: string) => {
+    if (!pkParseResult) return;
+
+    const cleanTrigger = newTrigger.trim();
+    if (!cleanTrigger) return;
+
+    const newValid: ValidShortcut = {
+      lineNum: item.lineNum,
+      trigger: cleanTrigger,
+      expansion: item.expansion || item.rawExpansion || item.rawMessage || ''
+    };
+
+    const updatedFailed = pkParseResult.failedShortcuts.filter(f => f !== item);
+    const updatedValid = [...pkParseResult.validShortcuts, newValid];
+
+    setPkParseResult({
+      totalParsed: pkParseResult.totalParsed,
+      validShortcuts: updatedValid,
+      failedShortcuts: updatedFailed
+    });
+
+    showToast('success', `Shortcut "${cleanTrigger}" berhasil ditetapkan dan dipindahkan ke daftar Valid Shortcuts!`);
+  };
 
   const showToast = (type: 'success' | 'error', message: string) => {
     setToast({ type, message });
@@ -94,13 +319,25 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       const client = getSupabaseClient();
+
+      // 1. Dapatkan user yang sedang aktif
+      const { data: { user: currentUser } } = await client.auth.getUser();
+      if (!currentUser) {
+        setLoading(false);
+        return;
+      }
+      setUser(currentUser);
+
+      // 2. Tambahkan filter .eq("user_id", currentUser.id)
       const { data, error } = await client
         .from('shortcuts')
         .select('*')
-        .order('id', { ascending: false });
+        .eq('user_id', currentUser.id)
+        .order('created_at', { ascending: false });
 
       if (error) {
         showToast('error', `Gagal memuat data: ${error.message}`);
+        console.error('Gagal mengambil data:', error);
       } else {
         const formatted: ShortcutItem[] = (data || []).map((item: any) => ({
           id: item.id,
@@ -117,6 +354,7 @@ export default function DashboardPage() {
       }
     } catch (err: any) {
       showToast('error', `Kesalahan koneksi: ${err.message}`);
+      console.error('Kesalahan koneksi:', err);
     } finally {
       setLoading(false);
     }
@@ -167,6 +405,12 @@ export default function DashboardPage() {
 
     try {
       const client = getSupabaseClient();
+      const { data: { user: currentUser } } = await client.auth.getUser();
+      const activeUserId = currentUser?.id || user?.id;
+      if (!activeUserId) {
+        throw new Error('Sesi login tidak valid atau telah kedaluwarsa. Silakan login kembali.');
+      }
+
       const cleanTrigger = formTrigger.trim().toLowerCase();
       const cleanExpansion = formExpansion.trim();
 
@@ -175,10 +419,11 @@ export default function DashboardPage() {
         expansion_text: cleanExpansion,
         category: formCategory,
         expansion_mode: formMode,
-        user_id: user?.id,
+        user_id: activeUserId, // <--- ID user yang sedang aktif
       };
 
-      if (editingItem?.id && (editingItem.trigger_code || editingItem.shortcut) && (editingItem.trigger_code || editingItem.shortcut).trim().toLowerCase() !== cleanTrigger) {
+      const prevTrigger = (editingItem?.trigger_code || editingItem?.shortcut || '').trim().toLowerCase();
+      if (editingItem?.id && prevTrigger && prevTrigger !== cleanTrigger) {
         // Jika trigger code diubah, hapus trigger lama
         await (client as any).from('shortcuts').delete().eq('id', editingItem.id);
       }
@@ -230,6 +475,14 @@ export default function DashboardPage() {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 1500);
+  };
+
+  const handleCopyExpansion = (text: string, idx: number) => {
+    if (!text || text === '(Teks Kosong)') return;
+    navigator.clipboard.writeText(text);
+    setCopiedExpansionIdx(idx);
+    showToast('success', 'Isi pesan berhasil disalin ke clipboard!');
+    setTimeout(() => setCopiedExpansionIdx(null), 1500);
   };
 
   // CSV Import handler
@@ -288,12 +541,20 @@ export default function DashboardPage() {
 
     try {
       const client = getSupabaseClient();
+
+      // Dapatkan user yang sedang aktif dari session/auth
+      const { data: { user: currentUser } } = await client.auth.getUser();
+      const activeUserId = currentUser?.id || user?.id;
+      if (!activeUserId) {
+        throw new Error('Sesi login tidak valid atau telah kedaluwarsa. Silakan login kembali.');
+      }
+
       const payload = csvPreview.map(item => ({
         trigger_code: (item.trigger_code || item.shortcut || '').trim().toLowerCase(),
         expansion_text: (item.expansion_text || item.expansion || '').trim(),
         category: item.category || 'Umum',
         expansion_mode: item.expansion_mode || 'INSTANT',
-        user_id: user?.id,
+        user_id: activeUserId, // <--- ID user yang sedang aktif
       }));
 
       const { error } = await (client as any)
@@ -312,6 +573,96 @@ export default function DashboardPage() {
     } finally {
       setActionLoading(false);
     }
+  };
+
+  // =========================================================================
+  // HANDLER IMPORT FILE PERFECT KEYBOARD (.4pk, .kps, .txt)
+  // =========================================================================
+  const handlePkFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setPkFileName(file.name);
+    setIsPkProcessing(true);
+    setPkStatus({});
+    setPkParseResult(null);
+
+    try {
+      // 1. Baca file secara asynchronous menggunakan FileReader / file.text()
+      const text = await file.text();
+
+      // 2. Parsing dan klasifikasi trigger valid vs tidak didukung
+      const result = parsePerfectKeyboardFile(text);
+      setPkParseResult(result);
+
+      // Default tab: sorot failed jika ada yang tidak didukung agar CS waspada
+      if (result.failedShortcuts.length > 0) {
+        setPkActiveTab('failed');
+      } else {
+        setPkActiveTab('valid');
+      }
+
+      if (result.totalParsed === 0) {
+        setPkStatus({ error: 'Tidak ada data shortcut atau macro yang terdeteksi di dalam file ini.' });
+      }
+    } catch (err: any) {
+      setPkStatus({ error: `Gagal membaca file: ${err.message || err}` });
+    } finally {
+      setIsPkProcessing(false);
+      e.target.value = '';
+    }
+  };
+
+  const executePkBatchInsert = async () => {
+    if (!pkParseResult || pkParseResult.validShortcuts.length === 0) return;
+    setActionLoading(true);
+    setPkStatus({});
+
+    try {
+      const client = getSupabaseClient();
+
+      // Dapatkan user yang sedang aktif dari session/auth
+      const { data: { user: currentUser } } = await client.auth.getUser();
+      const activeUserId = currentUser?.id || user?.id;
+      if (!activeUserId) {
+        throw new Error('Sesi login tidak valid atau telah kedaluwarsa. Silakan login kembali.');
+      }
+
+      const payload = pkParseResult.validShortcuts.map(item => ({
+        trigger_code: item.trigger.trim().toLowerCase(),
+        expansion_text: item.expansion.trim(),
+        category: pkCategory || 'Perfect Keyboard',
+        expansion_mode: pkMode,
+        user_id: activeUserId, // <--- ID user yang sedang aktif
+      }));
+
+      const { error } = await (client as any)
+        .from('shortcuts')
+        .upsert(payload, { onConflict: 'user_id, trigger_code' });
+
+      if (error) throw error;
+
+      showToast(
+        'success',
+        `Berhasil mengimpor ${pkParseResult.validShortcuts.length} shortcut Perfect Keyboard ke database!`
+      );
+      setPkStatus({
+        success: `Berhasil mengimpor ${pkParseResult.validShortcuts.length} shortcut ke Supabase Cloud. Seluruh shortcut ini siap disinkronkan ke HP Android CS!`
+      });
+      await fetchShortcuts();
+    } catch (err: any) {
+      setPkStatus({ error: `Gagal menyimpan ke Supabase: ${err.message}` });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const resetPkModal = () => {
+    setIsPkModalOpen(false);
+    setPkParseResult(null);
+    setPkFileName('');
+    setPkStatus({});
+    setPkSearchQuery('');
   };
 
   // Filter & Search logic
@@ -483,6 +834,18 @@ export default function DashboardPage() {
               title="Perbarui Data"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-400' : ''}`} />
+            </button>
+
+            {/* Tombol Impor File Perfect Keyboard (.4pk) */}
+            <button
+              onClick={() => {
+                setPkStatus({});
+                setIsPkModalOpen(true);
+              }}
+              className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 text-xs font-semibold flex items-center gap-2 border border-slate-700/80 transition-colors shadow-sm"
+              title="Impor template dari file Perfect Keyboard (.4pk, .kps, .txt)"
+            >
+              <span>📁 Impor File Perfect Keyboard (.4pk)</span>
             </button>
 
             {/* Tombol Import CSV */}
@@ -865,6 +1228,342 @@ export default function DashboardPage() {
                   <span>Import {csvPreview.length > 0 ? `${csvPreview.length} Data` : 'Sekarang'}</span>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Import File Perfect Keyboard (.4pk, .kps, .txt) */}
+      {isPkModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-md animate-in fade-in">
+          <div className="w-full max-w-5xl max-h-[92vh] flex flex-col bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl p-5 sm:p-7 relative">
+            {/* Tombol Tutup */}
+            <button
+              onClick={resetPkModal}
+              className="absolute right-5 top-5 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Header Modal */}
+            <div className="mb-4 pr-8">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <span className="text-xl">📁</span>
+                <span>Impor File Perfect Keyboard (.4pk / .kps / .txt)</span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Parsing otomatis template Perfect Keyboard dengan deteksi proteksi tombol fisik PC untuk keyboard HP Android.
+              </p>
+            </div>
+
+            {/* Status Alert (Error / Success) */}
+            {pkStatus.error && (
+              <div className="mb-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-center gap-2 shrink-0">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{pkStatus.error}</span>
+              </div>
+            )}
+            {pkStatus.success && (
+              <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center gap-2 shrink-0">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{pkStatus.success}</span>
+              </div>
+            )}
+
+            {/* State A: Belum Memilih File */}
+            {!pkParseResult ? (
+              <div className="p-10 border-2 border-dashed border-slate-700/80 hover:border-indigo-500/60 rounded-2xl bg-slate-950/60 text-center transition-all flex flex-col items-center justify-center my-6">
+                <input
+                  type="file"
+                  accept=".4pk,.kps,.txt"
+                  onChange={handlePkFileChange}
+                  className="hidden"
+                  id="pk_modal_file_input"
+                />
+                <label htmlFor="pk_modal_file_input" className="cursor-pointer flex flex-col items-center gap-3">
+                  <div className="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 hover:scale-105 transition-transform">
+                    {isPkProcessing ? (
+                      <RefreshCw className="w-8 h-8 animate-spin text-indigo-400" />
+                    ) : (
+                      <FolderOpen className="w-8 h-8" />
+                    )}
+                  </div>
+                  <div>
+                    <span className="text-sm font-semibold text-slate-200 block">
+                      {isPkProcessing ? 'Sedang membaca dan menganalisis berkas...' : 'Pilih atau Tarik File Perfect Keyboard (.4pk, .kps, .txt)'}
+                    </span>
+                    <span className="text-xs text-slate-500 block mt-1">
+                      Mendukung format Macro Text Wizard (MTW), XML, key-value, dan delimited text.
+                    </span>
+                  </div>
+                  <span className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 transition-colors mt-2 inline-flex items-center gap-2">
+                    <Upload className="w-4 h-4" />
+                    <span>Pilih Berkas dari Komputer</span>
+                  </span>
+                </label>
+              </div>
+            ) : (
+              /* State B: Hasil Parsing Tersedia */
+              <div className="flex-1 overflow-y-auto pr-1 space-y-4 min-h-0">
+                {/* File info bar */}
+                <div className="flex flex-wrap items-center justify-between p-3 rounded-xl bg-slate-950/70 border border-slate-800 text-xs">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-indigo-400" />
+                    <span className="font-semibold text-slate-200">{pkFileName}</span>
+                  </div>
+                  <label htmlFor="pk_modal_file_change" className="text-indigo-400 hover:text-indigo-300 font-medium cursor-pointer text-xs underline">
+                    Ganti File
+                    <input
+                      type="file"
+                      accept=".4pk,.kps,.txt"
+                      onChange={handlePkFileChange}
+                      className="hidden"
+                      id="pk_modal_file_change"
+                    />
+                  </label>
+                </div>
+
+                {/* 4. Kartu Ringkasan Status Impor */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                    <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Total Terbaca</div>
+                    <div className="text-2xl font-bold text-white mt-0.5">{pkParseResult.totalParsed}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">Macro dalam berkas</div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-emerald-950/30 border border-emerald-500/30">
+                    <div className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Valid (HP Ready)</span>
+                    </div>
+                    <div className="text-2xl font-bold text-emerald-400 mt-0.5">{pkParseResult.validShortcuts.length}</div>
+                    <div className="text-[11px] text-emerald-500/80 mt-0.5">Siap diimpor ke DB</div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-500/30">
+                    <div className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      <span>Tidak Didukung</span>
+                    </div>
+                    <div className="text-2xl font-bold text-amber-400 mt-0.5">{pkParseResult.failedShortcuts.length}</div>
+                    <div className="text-[11px] text-amber-500/80 mt-0.5">Tombol PC / Tidak valid</div>
+                  </div>
+                </div>
+
+                {/* Search Bar Real-Time */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={pkSearchQuery}
+                    onChange={(e) => setPkSearchQuery(e.target.value)}
+                    placeholder="🔍 Cari berdasarkan kode trigger atau isi teks shortcut..."
+                    className="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-4 py-2.5 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-emerald-500 font-sans shadow-inner transition-colors"
+                  />
+                  {pkSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setPkSearchQuery('')}
+                      className="absolute right-3 top-2 text-xs text-slate-400 hover:text-slate-200 bg-slate-800 hover:bg-slate-700 px-2 py-1 rounded transition-colors"
+                    >
+                      ✕ Clear
+                    </button>
+                  )}
+                </div>
+
+                {/* Tab Navigation */}
+                <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+                  <button
+                    type="button"
+                    onClick={() => setPkActiveTab('failed')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors ${
+                      pkActiveTab === 'failed'
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>
+                      Daftar Tidak Didukung ({pkSearchQuery ? `${filteredFailedList.length} / ` : ''}{pkParseResult.failedShortcuts.length})
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPkActiveTab('valid')}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 transition-colors ${
+                      pkActiveTab === 'valid'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>
+                      Shortcut Siap Diimpor ({pkSearchQuery ? `${filteredValidList.length} / ` : ''}{pkParseResult.validShortcuts.length})
+                    </span>
+                  </button>
+                </div>
+
+                {/* TAB 1: TABEL LAPORAN BERWARNA (WARNING / AMBER) */}
+                {pkActiveTab === 'failed' && (
+                  <div className="space-y-3">
+                    {filteredFailedList.length === 0 ? (
+                      <div className="p-8 text-center rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-400">
+                        {pkSearchQuery ? (
+                          <>
+                            <Search className="w-7 h-7 text-slate-500 mx-auto mb-2" />
+                            Tidak ada shortcut tidak didukung yang cocok dengan kata kunci &quot;{pkSearchQuery}&quot;.
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-7 h-7 text-emerald-400 mx-auto mb-2" />
+                            Semua shortcut dalam file ini valid dan dapat digunakan di keyboard HP Android!
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-amber-500/30 bg-amber-950/10 overflow-hidden">
+                        <div className="p-3.5 bg-amber-500/10 border-b border-amber-500/20 text-xs text-amber-300 flex items-start gap-2.5">
+                          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+                          <div>
+                            <span className="font-bold block">Peringatan Kompatibilitas Keyboard HP Android:</span>
+                            <span className="text-amber-200/80 text-[11px]">
+                              Shortcut di bawah ini disisihkan otomatis karena menggunakan tombol fisik PC (Function keys F1-F12, Enter, Esc), kombinasi tombol (Ctrl, Alt), atau trigger duplikat.
+                            </span>
+                          </div>
+                        </div>
+                        <div className="max-h-72 overflow-y-auto border border-amber-900/40 rounded-lg">
+                          <table className="w-full text-sm text-left border-collapse">
+                            <thead className="bg-amber-950/60 text-amber-300 uppercase text-xs sticky top-0 backdrop-blur z-10">
+                              <tr>
+                                <th className="p-2.5 border-b border-amber-900/40 w-16">BARIS</th>
+                                <th className="p-2.5 border-b border-amber-900/40 w-36">TRIGGER ASLI (.4PK)</th>
+                                <th className="p-2.5 border-b border-amber-900/40 min-w-[200px]">ISI PESAN (EXPANSION)</th>
+                                <th className="p-2.5 border-b border-amber-900/40 min-w-[170px]">ALASAN TIDAK DIPROSES</th>
+                                <th className="p-2.5 border-b border-amber-900/40 min-w-[240px]">SARAN TINDAKAN / RESOLUSI</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-amber-900/20 bg-slate-950/40 text-xs">
+                              {filteredFailedList.map((item, idx) => (
+                                <WarningRow
+                                  key={`${item.lineNum}-${idx}`}
+                                  item={item}
+                                  idx={idx}
+                                  existingTriggers={existingTriggers}
+                                  copiedExpansionIdx={copiedExpansionIdx}
+                                  onCopyExpansion={handleCopyExpansion}
+                                  onResolve={handleResolveFailedShortcut}
+                                />
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* TAB 2: SHORTCUT LOLOS VALIDASI */}
+                {pkActiveTab === 'valid' && (
+                  <div className="space-y-3">
+                    {filteredValidList.length === 0 ? (
+                      <div className="p-8 text-center rounded-xl bg-slate-950/60 border border-slate-800 text-xs text-slate-400">
+                        {pkSearchQuery ? (
+                          <>
+                            <Search className="w-7 h-7 text-slate-500 mx-auto mb-2" />
+                            Tidak ada shortcut siap diimpor yang cocok dengan kata kunci &quot;{pkSearchQuery}&quot;.
+                          </>
+                        ) : (
+                          'Tidak ada shortcut yang lolos validasi pada file ini. Silakan sesuaikan trigger pada file asal atau periksa daftar tidak didukung.'
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        {/* Pengaturan Kategori & Mode */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-400 mb-1.5">
+                              Kategori untuk Data yang Diimpor:
+                            </label>
+                            <select
+                              value={pkCategory}
+                              onChange={(e) => setPkCategory(e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500"
+                            >
+                              <option value="Perfect Keyboard">Perfect Keyboard (Khusus)</option>
+                              {FORM_CATEGORIES.map(c => (
+                                <option key={c} value={c}>{c}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-slate-400 mb-1.5">
+                              Mode Ekspansi Auto-Text:
+                            </label>
+                            <select
+                              value={pkMode}
+                              onChange={(e) => setPkMode(e.target.value as any)}
+                              className="w-full bg-slate-900 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500"
+                            >
+                              <option value="INSTANT">INSTANT (Langsung ekspansi saat diketik)</option>
+                              <option value="SPACE">SPACE (Ditahan hingga tombol Spasi/Enter ditekan)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Tabel Preview Valid */}
+                        <div className="rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden">
+                          <div className="max-h-56 overflow-y-auto">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead>
+                                <tr className="border-b border-slate-800 bg-slate-900/90 text-[11px] font-bold text-slate-400 uppercase tracking-wider sticky top-0 backdrop-blur">
+                                  <th className="py-2.5 px-3 w-16">Baris</th>
+                                  <th className="py-2.5 px-3 w-36">Trigger Valid</th>
+                                  <th className="py-2.5 px-3">Isi Teks Balasan (Expansion)</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-800/60">
+                                {filteredValidList.map((item, idx) => (
+                                  <tr key={idx} className="hover:bg-slate-900/40 transition-colors">
+                                    <td className="py-2 px-3 font-mono text-slate-500">#{item.lineNum}</td>
+                                    <td className="py-2 px-3 font-mono text-indigo-400 font-bold">{item.trigger}</td>
+                                    <td className="py-2 px-3 text-slate-300 truncate max-w-[340px]">{item.expansion}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Footer Buttons */}
+            <div className="flex items-center justify-between gap-3 pt-4 border-t border-slate-800 mt-4 shrink-0">
+              <button
+                type="button"
+                onClick={resetPkModal}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
+              >
+                {pkStatus.success ? 'Tutup' : 'Batal'}
+              </button>
+
+              {pkParseResult && pkParseResult.validShortcuts.length > 0 && !pkStatus.success && (
+                <button
+                  type="button"
+                  disabled={actionLoading}
+                  onClick={executePkBatchInsert}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white text-xs font-semibold shadow-lg shadow-emerald-600/30 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {actionLoading ? (
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <span>Simpan {pkParseResult.validShortcuts.length} Shortcut Valid ke Supabase</span>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>
