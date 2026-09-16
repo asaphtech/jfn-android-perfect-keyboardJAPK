@@ -27,7 +27,7 @@ BEGIN
     ) THEN
         CREATE POLICY "Users can view their own feedbacks" 
         ON public.feedbacks FOR SELECT 
-        USING (auth.uid() = user_id OR user_id IS NULL);
+        USING (auth.uid()::text = user_id::text OR user_id IS NULL);
     END IF;
 
     IF NOT EXISTS (
@@ -36,6 +36,6 @@ BEGIN
     ) THEN
         CREATE POLICY "Users can insert feedbacks" 
         ON public.feedbacks FOR INSERT 
-        WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+        WITH CHECK (auth.uid()::text = user_id::text OR user_id IS NULL);
     END IF;
 END $$;

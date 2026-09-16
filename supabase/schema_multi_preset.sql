@@ -47,7 +47,7 @@ UPDATE public.shortcuts s
 SET preset_id = (
     SELECT p.id 
     FROM public.presets p 
-    WHERE p.user_id = s.user_id 
+    WHERE p.user_id::text = s.user_id::text 
     ORDER BY p.created_at ASC 
     LIMIT 1
 )
@@ -94,7 +94,7 @@ BEGIN
     ) THEN
         CREATE POLICY "Users can view their own presets" 
         ON public.presets FOR SELECT 
-        USING (auth.uid() = user_id OR user_id IS NULL);
+        USING (auth.uid()::text = user_id::text OR user_id IS NULL);
     END IF;
 
     IF NOT EXISTS (
@@ -103,7 +103,7 @@ BEGIN
     ) THEN
         CREATE POLICY "Users can insert their own presets" 
         ON public.presets FOR INSERT 
-        WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+        WITH CHECK (auth.uid()::text = user_id::text OR user_id IS NULL);
     END IF;
 
     IF NOT EXISTS (
@@ -112,7 +112,7 @@ BEGIN
     ) THEN
         CREATE POLICY "Users can update their own presets" 
         ON public.presets FOR UPDATE 
-        USING (auth.uid() = user_id OR user_id IS NULL);
+        USING (auth.uid()::text = user_id::text OR user_id IS NULL);
     END IF;
 
     IF NOT EXISTS (
@@ -121,6 +121,6 @@ BEGIN
     ) THEN
         CREATE POLICY "Users can delete their own presets" 
         ON public.presets FOR DELETE 
-        USING (auth.uid() = user_id OR user_id IS NULL);
+        USING (auth.uid()::text = user_id::text OR user_id IS NULL);
     END IF;
 END $$;
